@@ -1,0 +1,122 @@
+import os
+from dbr import *
+import cv2
+from PIL import Image, ImageDraw
+import re
+import numpy as np
+from shapely.geometry import Polygon
+
+# Initialize Barcode Reader with license key
+reader = BarcodeReader()
+reader.init_license("t0068lQAAAIR7f27QvcwKBYrOYBcj4MUlaPvljwnmsabNAoUAO8LPyYazLfTtYb6Jw13t0VBd/SZ7JDGWqr1gxODPK/hXw84=;t0068lQAAAJu64RBSURJZKGQibct+QQD9IN2Bew/740XAMILKK3gdO3ln9gWbU5jVicM092asniRPrRt3tODxz62FI6+OJNI=")
+
+# Input file and output folder
+input_file = "pharma5.jpeg"  # Path to your input image
+output_file = "output/output_image.jpg"  # Path where the output image will be saved
+
+def barcodeReader(input_file, output_file):
+    # Create the output folder if it doesn't exist
+    output_folder = os.path.dirname(output_file)  # Extract the directory from the output file path
+    if not os.path.exists(output_folder):  # Check if the folder doesn't exist
+        os.makedirs(output_folder)  # Create the output folder
+
+    # Check if the input file exists
+    if not os.path.exists(input_file):
+        print(f"Error: The file '{input_file}' does not exist.")
+        return []
+
+    # Read the image
+    img = cv2.imread(input_file)
+    if img is None:
+        print(f"Error: Unable to load image '{input_file}'. Please check the file path and integrity.")
+        return []
+
+    count = 0
+    new_array = []
+    bounding_boxes_barcode = []
+    
+    while count < 2:
+        if count == 0:
+            settings = reader.get_runtime_settings()
+            settings.barcode_format_ids = EnumBarcodeFormat.BF_ALL  # Set to detect all barcode formats
+            reader.update_runtime_settings(settings)
+
+        if count == 1:
+            settings = reader.get_runtime_settings()
+            settings.barcode_format_ids_2 = EnumBarcodeFormat_2.BF2_ALL  # Set for secondary barcode formats
+            reader.update_runtime_settings(settings)
+
+        try:
+            text_results = reader.decode_file(input_file)  # Decode the barcodes from the image
+            if text_results:
+                for text_result in text_results:
+                    if len(text_result.barcode_format_string) == 0:
+                        continue
+                    else:
+                        boxes = text_result.localization_result.localization_points
+                        bounding_boxes_barcode.append(boxes)
+                        expanded_vertices = expand_polygon(boxes, offset=10)
+                        
+                        pts = np.array(expanded_vertices, np.int32)
+                        pts = pts.reshape((-1, 1, 2))
+
+                        detailVal = re.sub(r'\W+', '', text_result.barcode_text)  # Clean barcode text
+
+                        new_array.append(
+                            {
+                                "DetailValue": detailVal,
+                                "DetailColor": "blue",
+                                "DetailName": text_result.barcode_format_string,
+                                "Boxes": boxes
+                            }
+                        )
+        except BarcodeReaderError as bre:
+            print(bre)
+        count += 1
+
+    filtered_codes = filter_unique_barcode_texts(new_array)  # Filter out duplicate barcodes
+
+    # Draw bounding boxes for the filtered codes on the image
+    for filtered_code in filtered_codes:
+        expanded_vertices = expand_polygon(filtered_code["Boxes"], offset=10)
+        pts = np.array(expanded_vertices, np.int32)
+        pts = pts.reshape((-1, 1, 2))
+        cv2.polylines(img, [pts], True, (0, 0, 255), thickness=7)  # Draw the bounding boxes
+
+    # Save the processed image with bounding boxes
+    cv2.imwrite(output_file, img)
+
+    return filtered_codes  # Return the details of detected barcodes
+
+
+def expand_polygon(vertices, offset):
+    """
+    Expand the polygon outward using Shapely's buffer method.
+    """
+    poly = Polygon(vertices)  # Create a polygon from the vertices
+    expanded_poly = poly.buffer(offset, join_style=2)  # Apply buffer to expand polygon
+
+    # Convert expanded polygon back to a list of vertices
+    expanded_vertices = [(int(x), int(y)) for x, y in expanded_poly.exterior.coords]
+    return expanded_vertices
+
+
+def filter_unique_barcode_texts(text_results):
+    unique_text_results = {}
+    for text_result in text_results:
+        if text_result["DetailValue"] not in unique_text_results:
+            unique_text_results[text_result["DetailValue"]] = text_result
+
+    print("Filtered Barcode Texts: " + str(list(unique_text_results.values())))
+    return list(unique_text_results.values())  # Return unique barcode results
+
+
+# Example Usage
+input_file = "pharma5.jpeg"  # Your input image file with barcodes
+output_file = "output/output_image.jpg"  # Path to save output image
+
+# Run the barcode reader function
+filtered_barcodes = barcodeReader(input_file, output_file)
+
+# Optionally, print the filtered barcode details
+print(filtered_barcodes)
