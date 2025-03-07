@@ -1,0 +1,80 @@
+import cv2
+import numpy as np
+
+def resize_and_load_image(image_path, scale=0.3):
+    """
+    Loads an image in grayscale and resizes it using cv2.INTER_AREA for high-quality downscaling.
+    """
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(f"Error: Could not read image at {image_path}")
+    new_size = tuple(np.int32(np.array(img.shape[::-1]) * scale))
+    return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
+
+def extract_fast_features(image):
+    """
+    Extracts keypoints using FAST and computes descriptors using ORB.
+    """
+    fast = cv2.FastFeatureDetector_create()
+    orb = cv2.ORB_create()
+    keypoints = fast.detect(image, None)
+    return orb.compute(image, keypoints) if keypoints else ([], None)
+
+def match_features(descriptors1, descriptors2):
+    """
+    Matches ORB descriptors using a Brute-Force matcher with Hamming distance.
+    """
+    if descriptors1 is None or descriptors2 is None:
+        return []
+    matches = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(descriptors1, descriptors2)
+    return sorted(matches, key=lambda x: x.distance)
+
+def calculate_non_matching_percentage(matches, total_keypoints):
+    """
+    Calculates the percentage of non-matching keypoints.
+    """
+    return 100.0 if total_keypoints == 0 else (1 - len(matches) / total_keypoints) * 100
+
+def highlight_matches(img1, img2, keypoints1, keypoints2, matches, non_match_percent):
+    """
+    Draws matches between keypoints of two images and overlays the non-matching percentage.
+    """
+    img_matches = cv2.drawMatches(img1, keypoints1, img2, keypoints2, matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+    cv2.putText(img_matches, f"Non-Matching Area: {non_match_percent:.2f}%", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    return img_matches
+
+def main():
+    """
+    Main function to perform FAST feature matching and highlight matched keypoints.
+    """
+    try:
+        template_img = resize_and_load_image('image2.jpg', scale=0.5)
+        real_img = resize_and_load_image('image4.jpg', scale=0.3)
+    except FileNotFoundError as e:
+        print(e)
+        return
+
+    template_keypoints, template_descriptors = extract_fast_features(template_img)
+    real_keypoints, real_descriptors = extract_fast_features(real_img)
+
+    if not template_keypoints or not real_keypoints:
+        print("Error: Could not extract features from one or both images.")
+        return
+
+    matches = match_features(template_descriptors, real_descriptors)
+
+    if not matches:
+        print("Not enough good matches found.")
+        return
+    
+    total_keypoints = min(len(template_keypoints), len(real_keypoints))
+    non_match_percent = calculate_non_matching_percentage(matches, total_keypoints)
+    print(f"Non-Matching Area: {non_match_percent:.2f}%")
+
+    result_img = highlight_matches(template_img, real_img, template_keypoints, real_keypoints, matches, non_match_percent)
+
+    cv2.imwrite("fast_feature_matches.jpg", result_img)
+    print("Feature matching image saved as fast_feature_matches.jpg")
+
+if __name__ == "__main__":
+    main()
